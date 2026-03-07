@@ -12,13 +12,13 @@ use super::risk::RiskManager;
 
 pub struct Executor<E: Exchange> {
     exchange: Arc<E>,
-    risk: RiskManager,
+    risk: Arc<RiskManager>,
     dry_run: bool,
     cooldown_ms: u64,
 }
 
 impl<E: Exchange> Executor<E> {
-    pub fn new(exchange: Arc<E>, risk: RiskManager, dry_run: bool, cooldown_ms: u64) -> Self {
+    pub fn new(exchange: Arc<E>, risk: Arc<RiskManager>, dry_run: bool, cooldown_ms: u64) -> Self {
         Self {
             exchange,
             risk,

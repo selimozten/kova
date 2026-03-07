@@ -73,20 +73,22 @@ pub async fn run_engine<E: Exchange>(exchange: E, config: Config) -> anyhow::Res
     let (depth_tx, depth_rx) = broadcast::channel::<DepthDiff>(8192);
     let (opp_tx, opp_rx) = mpsc::channel::<ArbitrageOpportunity>(256);
 
-    // Risk manager
-    let risk_manager = RiskManager::new(&config.risk);
+    // Risk manager (shared)
+    let risk_manager = Arc::new(RiskManager::new(&config.risk));
 
     // Executor
     let executor = Executor::new(
         exchange.clone(),
-        risk_manager,
+        risk_manager.clone(),
         config.general.dry_run,
         config.risk.cooldown_ms,
     );
 
+    let stats_interval = config.monitoring.stats_interval_secs;
     let shutdown_ws = shutdown.clone();
     let shutdown_detect = shutdown.clone();
     let shutdown_exec = shutdown.clone();
+    let shutdown_stats = shutdown.clone();
 
     // Task: WebSocket depth subscription
     let ws_exchange = exchange.clone();
@@ -135,6 +137,26 @@ pub async fn run_engine<E: Exchange>(exchange: E, config: Config) -> anyhow::Res
         }
     });
 
+    // Task: Periodic stats
+    let stats_risk = risk_manager.clone();
+    let stats_handle = tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(stats_interval));
+        interval.tick().await; // skip first immediate tick
+        loop {
+            tokio::select! {
+                _ = interval.tick() => {
+                    let (pnl, total, wins) = stats_risk.stats_snapshot();
+                    let losses = total - wins;
+                    info!(
+                        "[STATS] trades={} wins={} losses={} pnl={}",
+                        total, wins, losses, pnl
+                    );
+                }
+                _ = shutdown_stats.wait() => break,
+            }
+        }
+    });
+
     // Wait for ctrl-c
     info!("engine running. press ctrl-c to stop.");
     tokio::signal::ctrl_c().await?;
@@ -142,7 +164,7 @@ pub async fn run_engine<E: Exchange>(exchange: E, config: Config) -> anyhow::Res
     shutdown.trigger();
 
     // Wait for tasks
-    let _ = tokio::join!(ws_handle, detect_handle, exec_handle);
+    let _ = tokio::join!(ws_handle, detect_handle, exec_handle, stats_handle);
 
     info!("engine stopped");
     Ok(())

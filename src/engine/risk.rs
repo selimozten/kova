@@ -15,6 +15,7 @@ pub struct RiskManager {
     session_pnl: Mutex<Decimal>,
     consecutive_losses: AtomicU32,
     total_trades: AtomicU32,
+    winning_trades: AtomicU32,
     kill_switch: std::sync::atomic::AtomicBool,
 }
 
@@ -28,6 +29,7 @@ impl RiskManager {
             session_pnl: Mutex::new(Decimal::ZERO),
             consecutive_losses: AtomicU32::new(0),
             total_trades: AtomicU32::new(0),
+            winning_trades: AtomicU32::new(0),
             kill_switch: std::sync::atomic::AtomicBool::new(false),
         }
     }
@@ -69,6 +71,7 @@ impl RiskManager {
             }
         } else {
             self.consecutive_losses.store(0, Ordering::Relaxed);
+            self.winning_trades.fetch_add(1, Ordering::Relaxed);
         }
 
         if *session < -self.max_session_loss {
@@ -97,6 +100,13 @@ impl RiskManager {
 
     pub fn is_killed(&self) -> bool {
         self.kill_switch.load(Ordering::Relaxed)
+    }
+
+    pub fn stats_snapshot(&self) -> (Decimal, u32, u32) {
+        let pnl = *self.session_pnl.lock().unwrap();
+        let total = self.total_trades.load(Ordering::Relaxed);
+        let wins = self.winning_trades.load(Ordering::Relaxed);
+        (pnl, total, wins)
     }
 }
 
