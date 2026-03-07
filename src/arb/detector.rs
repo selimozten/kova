@@ -100,7 +100,20 @@ pub fn discover_triangles(symbols: &[SymbolInfo], start_assets: &[String]) -> Ve
         }
     }
 
-    info!("discovered {} triangle paths", paths.len());
+    // Deduplicate: same 3 symbols in any order = same triangle
+    let before = paths.len();
+    let mut seen = std::collections::HashSet::new();
+    paths.retain(|p| {
+        let mut key: Vec<&str> = p.legs.iter().map(|l| l.symbol.as_str()).collect();
+        key.sort();
+        seen.insert(key.join(","))
+    });
+
+    info!(
+        "discovered {} triangle paths ({} duplicates removed)",
+        paths.len(),
+        before - paths.len()
+    );
     paths
 }
 
