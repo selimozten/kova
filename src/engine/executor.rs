@@ -106,13 +106,19 @@ impl<E: Exchange> Executor<E> {
                 leg.quantity
             };
 
+            let client_oid = format!(
+                "kova_{}_{}",
+                chrono::Utc::now().format("%Y%m%d%H%M%S%3f"),
+                i + 1,
+            );
+
             let request = OrderRequest {
                 symbol: leg.symbol.clone(),
                 side: leg.side,
                 order_type: OrderType::Market,
                 quantity,
                 price: None,
-                client_order_id: None,
+                client_order_id: Some(client_oid),
             };
 
             let result = self
