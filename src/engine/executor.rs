@@ -1,12 +1,14 @@
 use std::sync::Arc;
 
+use dashmap::DashMap;
 use rust_decimal::Decimal;
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
 use crate::arb::types::ArbitrageOpportunity;
-use crate::exchange::types::{OrderRequest, OrderSide, OrderStatus, OrderType};
+use crate::exchange::types::{OrderRequest, OrderSide, OrderStatus, OrderType, SymbolInfo};
 use crate::exchange::Exchange;
+use crate::util::decimal::round_to_step;
 
 use super::risk::RiskManager;
 
@@ -15,15 +17,23 @@ pub struct Executor<E: Exchange> {
     risk: Arc<RiskManager>,
     dry_run: bool,
     cooldown_ms: u64,
+    symbol_info: Arc<DashMap<String, SymbolInfo>>,
 }
 
 impl<E: Exchange> Executor<E> {
-    pub fn new(exchange: Arc<E>, risk: Arc<RiskManager>, dry_run: bool, cooldown_ms: u64) -> Self {
+    pub fn new(
+        exchange: Arc<E>,
+        risk: Arc<RiskManager>,
+        dry_run: bool,
+        cooldown_ms: u64,
+        symbol_info: Arc<DashMap<String, SymbolInfo>>,
+    ) -> Self {
         Self {
             exchange,
             risk,
             dry_run,
             cooldown_ms,
+            symbol_info,
         }
     }
 
@@ -83,11 +93,24 @@ impl<E: Exchange> Executor<E> {
                 current_amount,
             );
 
+            let quantity = if let Some(info) = self.symbol_info.get(&leg.symbol) {
+                let rounded = round_to_step(leg.quantity, info.step_size);
+                if rounded < info.min_qty {
+                    return Err(format!(
+                        "leg {} qty {} below min {}",
+                        i + 1, rounded, info.min_qty
+                    ));
+                }
+                rounded
+            } else {
+                leg.quantity
+            };
+
             let request = OrderRequest {
                 symbol: leg.symbol.clone(),
                 side: leg.side,
                 order_type: OrderType::Market,
-                quantity: leg.quantity,
+                quantity,
                 price: None,
                 client_order_id: None,
             };

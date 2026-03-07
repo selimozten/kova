@@ -10,7 +10,7 @@ use tracing::{error, info, warn};
 use crate::arb::detector;
 use crate::arb::types::ArbitrageOpportunity;
 use crate::config::Config;
-use crate::exchange::types::{DepthDiff, OrderBook};
+use crate::exchange::types::{DepthDiff, OrderBook, SymbolInfo};
 use crate::exchange::Exchange;
 use crate::util::shutdown::ShutdownSignal;
 
@@ -22,21 +22,27 @@ pub async fn run_engine<E: Exchange>(exchange: E, config: Config) -> anyhow::Res
     let shutdown = ShutdownSignal::new();
     let exchange = Arc::new(exchange);
 
+    // Fetch all exchange symbols
+    info!("fetching exchange symbol info...");
+    let all_symbol_info = exchange.get_all_symbols().await?;
+
+    // Build symbol info lookup map
+    let symbol_info_map: Arc<DashMap<String, SymbolInfo>> = Arc::new(DashMap::new());
+    for info in &all_symbol_info {
+        symbol_info_map.insert(info.symbol.clone(), info.clone());
+    }
+
     // Discover or load triangle paths
     let paths = if config.triangles.auto_discover {
-        info!("discovering triangle paths from exchange...");
-        let symbols = exchange.get_all_symbols().await?;
         let start_assets = if config.triangles.start_assets.is_empty() {
             vec![config.general.start_asset.clone()]
         } else {
             config.triangles.start_assets.clone()
         };
-        detector::discover_triangles(&symbols, &start_assets)
+        detector::discover_triangles(&all_symbol_info, &start_assets)
     } else {
-        // Build paths from explicit config (future: parse config.triangles.paths)
         warn!("explicit paths not yet implemented, using auto-discover");
-        let symbols = exchange.get_all_symbols().await?;
-        detector::discover_triangles(&symbols, &[config.general.start_asset.clone()])
+        detector::discover_triangles(&all_symbol_info, &[config.general.start_asset.clone()])
     };
 
     if paths.is_empty() {
@@ -82,6 +88,7 @@ pub async fn run_engine<E: Exchange>(exchange: E, config: Config) -> anyhow::Res
         risk_manager.clone(),
         config.general.dry_run,
         config.risk.cooldown_ms,
+        symbol_info_map,
     );
 
     let stats_interval = config.monitoring.stats_interval_secs;
