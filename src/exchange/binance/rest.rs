@@ -1,8 +1,10 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use reqwest::Client;
 use rust_decimal::Decimal;
+use tokio::sync::Semaphore;
 use tracing::{debug, warn};
 
 use super::auth;
@@ -15,6 +17,7 @@ pub struct BinanceRest {
     base_url: String,
     api_key: String,
     api_secret: String,
+    rate_limiter: Arc<Semaphore>,
 }
 
 impl BinanceRest {
@@ -24,7 +27,18 @@ impl BinanceRest {
             base_url: base_url.to_string(),
             api_key: api_key.to_string(),
             api_secret: api_secret.to_string(),
+            rate_limiter: Arc::new(Semaphore::new(5)),
         }
+    }
+
+    async fn acquire_rate_limit(&self) -> tokio::sync::OwnedSemaphorePermit {
+        let permit = self.rate_limiter.clone().acquire_owned().await.unwrap();
+        let limiter = self.rate_limiter.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            drop(limiter);
+        });
+        permit
     }
 
     fn timestamp_ms() -> u64 {
@@ -40,6 +54,7 @@ impl BinanceRest {
     }
 
     pub async fn get_exchange_info(&self) -> Result<Vec<SymbolInfo>, ExchangeError> {
+        let _permit = self.acquire_rate_limit().await;
         let url = format!("{}/api/v3/exchangeInfo", self.base_url);
         let resp = self.client.get(&url).send().await?;
         let text = resp.text().await?;
@@ -99,6 +114,7 @@ impl BinanceRest {
         symbol: &str,
         limit: u32,
     ) -> Result<OrderBook, ExchangeError> {
+        let _permit = self.acquire_rate_limit().await;
         let url = format!(
             "{}/api/v3/depth?symbol={}&limit={}",
             self.base_url, symbol, limit
@@ -137,6 +153,7 @@ impl BinanceRest {
         &self,
         request: &OrderRequest,
     ) -> Result<OrderResult, ExchangeError> {
+        let _permit = self.acquire_rate_limit().await;
         let mut query = format!(
             "symbol={}&side={}&type={}&quantity={}&timestamp={}",
             request.symbol,
@@ -210,6 +227,7 @@ impl BinanceRest {
         symbol: &str,
         order_id: &str,
     ) -> Result<(), ExchangeError> {
+        let _permit = self.acquire_rate_limit().await;
         let query = format!(
             "symbol={}&orderId={}&timestamp={}",
             symbol,
@@ -242,6 +260,7 @@ impl BinanceRest {
     }
 
     pub async fn get_balances(&self) -> Result<HashMap<String, Decimal>, ExchangeError> {
+        let _permit = self.acquire_rate_limit().await;
         let query = format!("timestamp={}", Self::timestamp_ms());
         let signed = self.sign_query(&query);
         let url = format!("{}/api/v3/account?{}", self.base_url, signed);
