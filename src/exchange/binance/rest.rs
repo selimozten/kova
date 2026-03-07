@@ -12,6 +12,8 @@ use super::models::*;
 use crate::exchange::types::*;
 use crate::exchange::ExchangeError;
 
+const RECV_WINDOW: u64 = 5000;
+
 pub struct BinanceRest {
     client: Client,
     base_url: String,
@@ -29,6 +31,15 @@ impl BinanceRest {
             api_secret: api_secret.to_string(),
             rate_limiter: Arc::new(Semaphore::new(5)),
         }
+    }
+
+    fn signed_query(&self, params: &str) -> String {
+        let query = if params.is_empty() {
+            format!("recvWindow={}&timestamp={}", RECV_WINDOW, Self::timestamp_ms())
+        } else {
+            format!("{}&recvWindow={}&timestamp={}", params, RECV_WINDOW, Self::timestamp_ms())
+        };
+        self.sign_query(&query)
     }
 
     async fn acquire_rate_limit(&self) -> tokio::sync::OwnedSemaphorePermit {
@@ -154,24 +165,23 @@ impl BinanceRest {
         request: &OrderRequest,
     ) -> Result<OrderResult, ExchangeError> {
         let _permit = self.acquire_rate_limit().await;
-        let mut query = format!(
-            "symbol={}&side={}&type={}&quantity={}&timestamp={}",
+        let mut params = format!(
+            "symbol={}&side={}&type={}&quantity={}",
             request.symbol,
             request.side,
             request.order_type,
             request.quantity,
-            Self::timestamp_ms(),
         );
 
         if let Some(price) = request.price {
-            query.push_str(&format!("&price={price}&timeInForce=GTC"));
+            params.push_str(&format!("&price={price}&timeInForce=GTC"));
         }
 
         if let Some(ref coid) = request.client_order_id {
-            query.push_str(&format!("&newClientOrderId={coid}"));
+            params.push_str(&format!("&newClientOrderId={coid}"));
         }
 
-        let signed = self.sign_query(&query);
+        let signed = self.signed_query(&params);
         let url = format!("{}/api/v3/order?{}", self.base_url, signed);
 
         let resp = self
@@ -228,13 +238,8 @@ impl BinanceRest {
         order_id: &str,
     ) -> Result<(), ExchangeError> {
         let _permit = self.acquire_rate_limit().await;
-        let query = format!(
-            "symbol={}&orderId={}&timestamp={}",
-            symbol,
-            order_id,
-            Self::timestamp_ms(),
-        );
-        let signed = self.sign_query(&query);
+        let params = format!("symbol={}&orderId={}", symbol, order_id);
+        let signed = self.signed_query(&params);
         let url = format!("{}/api/v3/order?{}", self.base_url, signed);
 
         let resp = self
@@ -261,8 +266,7 @@ impl BinanceRest {
 
     pub async fn get_balances(&self) -> Result<HashMap<String, Decimal>, ExchangeError> {
         let _permit = self.acquire_rate_limit().await;
-        let query = format!("timestamp={}", Self::timestamp_ms());
-        let signed = self.sign_query(&query);
+        let signed = self.signed_query("");
         let url = format!("{}/api/v3/account?{}", self.base_url, signed);
 
         let resp = self
