@@ -105,6 +105,7 @@ pub async fn run_engine<E: Exchange>(exchange: E, config: Config) -> anyhow::Res
                 config.general.trade_amount,
                 config.exchange.fees.taker,
                 config.risk.min_profit_pct,
+                config.risk.slippage_buffer_bps,
             ) => {}
             _ = shutdown_detect.wait() => {
                 info!("detector shutting down");

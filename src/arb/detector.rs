@@ -129,6 +129,7 @@ pub async fn run_detector(
     start_amount: Decimal,
     taker_fee: Decimal,
     min_profit_pct: Decimal,
+    slippage_bps: Decimal,
 ) {
     let symbol_index = build_symbol_index(&paths);
 
@@ -173,6 +174,7 @@ pub async fn run_detector(
                 &|sym| ob_clone.get(sym).map(|r| r.value().clone()),
                 start_amount,
                 taker_fee,
+                slippage_bps,
             );
 
             if let Some(opp) = opp {

@@ -14,13 +14,14 @@ pub fn evaluate_triangle(
     order_books: &impl Fn(&str) -> Option<OrderBook>,
     start_amount: Decimal,
     taker_fee: Decimal,
+    slippage_bps: Decimal,
 ) -> Option<ArbitrageOpportunity> {
     let mut current_amount = start_amount;
     let mut legs = Vec::with_capacity(3);
 
     for leg in &path.legs {
         let ob = order_books(&leg.symbol)?;
-        let detail = evaluate_leg(leg, &ob, current_amount, taker_fee)?;
+        let detail = evaluate_leg(leg, &ob, current_amount, taker_fee, slippage_bps)?;
         current_amount = detail.output_amount;
         legs.push(detail);
     }
@@ -47,15 +48,17 @@ fn evaluate_leg(
     ob: &OrderBook,
     input_amount: Decimal,
     taker_fee: Decimal,
+    slippage_bps: Decimal,
 ) -> Option<LegDetail> {
     let fee_multiplier = Decimal::ONE - taker_fee;
+    let slippage_multiplier = Decimal::ONE - slippage_bps / dec!(10000);
 
     match leg.side {
         OrderSide::Buy => {
             // We have quote currency, want to buy base currency.
             // Walk asks: we spend `input_amount` of quote to get base.
             let base_qty = buy_with_quote(ob, input_amount)?;
-            let output = base_qty * fee_multiplier;
+            let output = base_qty * fee_multiplier * slippage_multiplier;
             let effective_price = if base_qty > Decimal::ZERO {
                 input_amount / base_qty
             } else {
@@ -77,7 +80,7 @@ fn evaluate_leg(
             // Walk bids: sell `input_amount` base to get quote.
             let (eff_price, _) = ob.walk_bids(input_amount)?;
             let quote_proceeds = input_amount * eff_price;
-            let output = quote_proceeds * fee_multiplier;
+            let output = quote_proceeds * fee_multiplier * slippage_multiplier;
 
             Some(LegDetail {
                 symbol: leg.symbol.clone(),
@@ -191,6 +194,7 @@ mod tests {
             &|sym| books.get(sym).cloned(),
             dec!(1000),
             dec!(0.001),
+            dec!(0),
         );
 
         assert!(opp.is_some());
@@ -251,6 +255,7 @@ mod tests {
             &|sym| books.get(sym).cloned(),
             dec!(1000),
             dec!(0.001),
+            dec!(0),
         );
 
         // Should still return an opportunity, just not profitable
