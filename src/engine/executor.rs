@@ -52,6 +52,24 @@ impl<E: Exchange> Executor<E> {
 
         info!("executing: {}", opp);
 
+        // Verify we have enough balance for the first leg
+        match self.exchange.get_balances().await {
+            Ok(balances) => {
+                let start_asset = &opp.path.start_asset;
+                let available = balances.get(start_asset).copied().unwrap_or(Decimal::ZERO);
+                if available < opp.start_amount {
+                    warn!(
+                        "insufficient balance: have {} {}, need {}",
+                        available, start_asset, opp.start_amount
+                    );
+                    return;
+                }
+            }
+            Err(e) => {
+                warn!("failed to check balance, proceeding: {}", e);
+            }
+        }
+
         if self.dry_run {
             info!("[DRY RUN] would execute 3 legs, expected profit: {} ({:.4}%)",
                 opp.profit_amount, opp.profit_pct);
