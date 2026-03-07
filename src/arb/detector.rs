@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use dashmap::DashMap;
@@ -130,6 +131,8 @@ pub async fn run_detector(
     taker_fee: Decimal,
     min_profit_pct: Decimal,
     slippage_bps: Decimal,
+    evaluated_counter: Arc<AtomicU64>,
+    opportunity_counter: Arc<AtomicU64>,
 ) {
     let symbol_index = build_symbol_index(&paths);
 
@@ -168,6 +171,7 @@ pub async fn run_detector(
         for &idx in affected {
             let path = &paths[idx];
             let ob_clone = order_books.clone();
+            evaluated_counter.fetch_add(1, Ordering::Relaxed);
 
             let opp = calculator::evaluate_triangle(
                 path,
@@ -179,6 +183,7 @@ pub async fn run_detector(
 
             if let Some(opp) = opp {
                 if opp.profit_pct >= min_profit_pct {
+                    opportunity_counter.fetch_add(1, Ordering::Relaxed);
                     trace!("{}", opp);
                     if opp_tx.send(opp).await.is_err() {
                         info!("opportunity channel closed, detector stopping");

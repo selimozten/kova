@@ -1,6 +1,7 @@
 pub mod executor;
 pub mod risk;
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use dashmap::DashMap;
@@ -91,6 +92,8 @@ pub async fn run_engine<E: Exchange>(exchange: E, config: Config) -> anyhow::Res
         symbol_info_map,
     );
 
+    let evaluated_counter = Arc::new(AtomicU64::new(0));
+    let opportunity_counter = Arc::new(AtomicU64::new(0));
     let stats_interval = config.monitoring.stats_interval_secs;
     let shutdown_ws = shutdown.clone();
     let shutdown_detect = shutdown.clone();
@@ -116,6 +119,8 @@ pub async fn run_engine<E: Exchange>(exchange: E, config: Config) -> anyhow::Res
     // Task: Arbitrage detector
     let detect_paths = paths.clone();
     let detect_obs = order_books.clone();
+    let detect_eval = evaluated_counter.clone();
+    let detect_opp = opportunity_counter.clone();
     let detect_handle = tokio::spawn(async move {
         tokio::select! {
             _ = detector::run_detector(
@@ -127,6 +132,8 @@ pub async fn run_engine<E: Exchange>(exchange: E, config: Config) -> anyhow::Res
                 config.exchange.fees.taker,
                 config.risk.min_profit_pct,
                 config.risk.slippage_buffer_bps,
+                detect_eval,
+                detect_opp,
             ) => {}
             _ = shutdown_detect.wait() => {
                 info!("detector shutting down");
@@ -146,6 +153,8 @@ pub async fn run_engine<E: Exchange>(exchange: E, config: Config) -> anyhow::Res
 
     // Task: Periodic stats
     let stats_risk = risk_manager.clone();
+    let stats_eval = evaluated_counter.clone();
+    let stats_opp = opportunity_counter.clone();
     let stats_handle = tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(stats_interval));
         interval.tick().await; // skip first immediate tick
@@ -154,9 +163,11 @@ pub async fn run_engine<E: Exchange>(exchange: E, config: Config) -> anyhow::Res
                 _ = interval.tick() => {
                     let (pnl, total, wins) = stats_risk.stats_snapshot();
                     let losses = total - wins;
+                    let evals = stats_eval.load(Ordering::Relaxed);
+                    let opps = stats_opp.load(Ordering::Relaxed);
                     info!(
-                        "[STATS] trades={} wins={} losses={} pnl={}",
-                        total, wins, losses, pnl
+                        "[STATS] evals={} opps={} trades={} wins={} losses={} pnl={}",
+                        evals, opps, total, wins, losses, pnl
                     );
                 }
                 _ = shutdown_stats.wait() => break,
