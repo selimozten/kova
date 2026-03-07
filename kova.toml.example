@@ -1,0 +1,34 @@
+[general]
+start_asset = "USDT"
+trade_amount = 100.0
+dry_run = true
+log_level = "info"
+
+[exchange]
+name = "binance"
+api_key = "YOUR_API_KEY"
+api_secret = "YOUR_API_SECRET"
+# base_url = "https://api.binance.com"
+# ws_url = "wss://stream.binance.com:9443"
+
+[exchange.fees]
+maker = 0.001
+taker = 0.001
+
+[triangles]
+auto_discover = true
+start_assets = ["USDT"]
+# Or explicit paths:
+# paths = [["BTCUSDT", "ETHBTC", "ETHUSDT"]]
+
+[risk]
+min_profit_pct = 0.15
+max_trade_size = 500.0
+max_session_loss = 50.0
+max_consecutive_losses = 5
+slippage_buffer_bps = 2.0
+cooldown_ms = 500
+
+[monitoring]
+print_opportunities = true
+stats_interval_secs = 10

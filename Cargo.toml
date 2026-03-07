@@ -1,0 +1,41 @@
+[package]
+name = "kova"
+version = "0.1.0"
+edition = "2021"
+description = "Triangular arbitrage engine for cryptocurrency markets"
+license = "MIT"
+rust-version = "1.75"
+
+[[bin]]
+name = "kova"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
+reqwest = { version = "0.12", features = ["json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+clap = { version = "4", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+rust_decimal = { version = "1", features = ["serde-with-str"] }
+rust_decimal_macros = "1"
+hmac = "0.12"
+sha2 = "0.10"
+thiserror = "2"
+dashmap = "6"
+futures-util = { version = "0.3", features = ["sink"] }
+chrono = { version = "0.4", features = ["serde"] }
+anyhow = "1"
+hex = "0.4"
+tokio-util = "0.7"
+
+[dev-dependencies]
+tokio-test = "0.4"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
