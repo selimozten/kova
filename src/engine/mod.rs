@@ -54,12 +54,24 @@ pub async fn run_engine<E: Exchange>(exchange: E, config: Config) -> anyhow::Res
     all_symbols.dedup();
     info!("subscribing to {} symbols", all_symbols.len());
 
+    // Fetch initial order book snapshots
+    let order_books: Arc<DashMap<String, OrderBook>> = Arc::new(DashMap::new());
+    info!("fetching initial order book snapshots...");
+    for symbol in &all_symbols {
+        match exchange.fetch_order_book_snapshot(symbol, 20).await {
+            Ok(ob) => {
+                order_books.insert(symbol.clone(), ob);
+            }
+            Err(e) => {
+                warn!("failed to fetch snapshot for {}: {}", symbol, e);
+            }
+        }
+    }
+    info!("initialized {} order books", order_books.len());
+
     // Channels
     let (depth_tx, depth_rx) = broadcast::channel::<DepthDiff>(8192);
     let (opp_tx, opp_rx) = mpsc::channel::<ArbitrageOpportunity>(256);
-
-    // Shared order books
-    let order_books: Arc<DashMap<String, OrderBook>> = Arc::new(DashMap::new());
 
     // Risk manager
     let risk_manager = RiskManager::new(&config.risk);
