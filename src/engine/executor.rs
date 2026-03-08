@@ -18,6 +18,7 @@ pub struct Executor<E: Exchange> {
     risk: Arc<RiskManager>,
     dry_run: bool,
     cooldown_ms: u64,
+    max_opportunity_age_ms: u64,
     symbol_info: Arc<DashMap<String, SymbolInfo>>,
 }
 
@@ -27,6 +28,7 @@ impl<E: Exchange> Executor<E> {
         risk: Arc<RiskManager>,
         dry_run: bool,
         cooldown_ms: u64,
+        max_opportunity_age_ms: u64,
         symbol_info: Arc<DashMap<String, SymbolInfo>>,
     ) -> Self {
         Self {
@@ -34,6 +36,7 @@ impl<E: Exchange> Executor<E> {
             risk,
             dry_run,
             cooldown_ms,
+            max_opportunity_age_ms,
             symbol_info,
         }
     }
@@ -52,7 +55,7 @@ impl<E: Exchange> Executor<E> {
             .expect("time went backwards")
             .as_millis() as u64;
         let age_ms = now_ms.saturating_sub(opp.detected_at_ms);
-        if age_ms > 2000 {
+        if age_ms > self.max_opportunity_age_ms {
             debug!("dropping stale opportunity ({}ms old): {}", age_ms, opp.path);
             return;
         }

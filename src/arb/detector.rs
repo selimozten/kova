@@ -133,9 +133,6 @@ pub fn build_symbol_index(paths: &[TrianglePath]) -> HashMap<String, Vec<usize>>
     index
 }
 
-/// Maximum order book age (ms) before we consider it stale and skip evaluation.
-const MAX_OB_AGE_MS: u64 = 5_000;
-
 /// Run the arbitrage detector loop.
 /// Listens for depth updates, maintains local order books, and evaluates triangles.
 pub async fn run_detector(
@@ -149,6 +146,7 @@ pub async fn run_detector(
     slippage_bps: Decimal,
     evaluated_counter: Arc<AtomicU64>,
     opportunity_counter: Arc<AtomicU64>,
+    max_ob_age_ms: u64,
 ) {
     let symbol_index = build_symbol_index(&paths);
 
@@ -192,7 +190,7 @@ pub async fn run_detector(
             let any_stale = path.legs.iter().any(|leg| {
                 ob_clone
                     .get(&leg.symbol)
-                    .map(|ob| ob.is_stale(MAX_OB_AGE_MS))
+                    .map(|ob| ob.is_stale(max_ob_age_ms))
                     .unwrap_or(true)
             });
             if any_stale {

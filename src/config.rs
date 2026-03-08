@@ -78,6 +78,10 @@ pub struct RiskConfig {
     pub slippage_buffer_bps: Decimal,
     #[serde(default = "default_cooldown")]
     pub cooldown_ms: u64,
+    #[serde(default = "default_max_ob_age")]
+    pub max_ob_age_ms: u64,
+    #[serde(default = "default_max_opp_age")]
+    pub max_opportunity_age_ms: u64,
 }
 
 fn default_min_profit() -> Decimal {
@@ -97,6 +101,12 @@ fn default_slippage_buffer() -> Decimal {
 }
 fn default_cooldown() -> u64 {
     500
+}
+fn default_max_ob_age() -> u64 {
+    5000
+}
+fn default_max_opp_age() -> u64 {
+    2000
 }
 
 #[derive(Debug, Deserialize, Clone)]

@@ -125,6 +125,8 @@ mod tests {
             max_consecutive_losses: 3,
             slippage_buffer_bps: dec!(2),
             cooldown_ms: 0,
+            max_ob_age_ms: 5000,
+            max_opportunity_age_ms: 2000,
         }
     }
 

@@ -103,6 +103,7 @@ pub async fn run_engine<E: Exchange>(exchange: E, config: Config) -> anyhow::Res
         risk_manager.clone(),
         config.general.dry_run,
         config.risk.cooldown_ms,
+        config.risk.max_opportunity_age_ms,
         symbol_info_map,
     );
 
@@ -148,6 +149,7 @@ pub async fn run_engine<E: Exchange>(exchange: E, config: Config) -> anyhow::Res
                 config.risk.slippage_buffer_bps,
                 detect_eval,
                 detect_opp,
+                config.risk.max_ob_age_ms,
             ) => {}
             _ = shutdown_detect.wait() => {
                 info!("detector shutting down");
