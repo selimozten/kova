@@ -61,16 +61,30 @@ pub async fn run_engine<E: Exchange>(exchange: E, config: Config) -> anyhow::Res
     all_symbols.dedup();
     info!("subscribing to {} symbols", all_symbols.len());
 
-    // Fetch initial order book snapshots
+    // Fetch initial order book snapshots in parallel batches
     let order_books: Arc<DashMap<String, OrderBook>> = Arc::new(DashMap::new());
     info!("fetching initial order book snapshots...");
-    for symbol in &all_symbols {
-        match exchange.fetch_order_book_snapshot(symbol, 20).await {
-            Ok(ob) => {
-                order_books.insert(symbol.clone(), ob);
-            }
-            Err(e) => {
-                warn!("failed to fetch snapshot for {}: {}", symbol, e);
+    let batch_size = 10;
+    for chunk in all_symbols.chunks(batch_size) {
+        let mut handles = Vec::new();
+        for symbol in chunk {
+            let ex = exchange.clone();
+            let sym = symbol.clone();
+            handles.push(tokio::spawn(async move {
+                (sym.clone(), ex.fetch_order_book_snapshot(&sym, 20).await)
+            }));
+        }
+        for handle in handles {
+            match handle.await {
+                Ok((sym, Ok(ob))) => {
+                    order_books.insert(sym, ob);
+                }
+                Ok((sym, Err(e))) => {
+                    warn!("failed to fetch snapshot for {}: {}", sym, e);
+                }
+                Err(e) => {
+                    warn!("snapshot task panicked: {}", e);
+                }
             }
         }
     }
