@@ -18,6 +18,8 @@ pub struct OrderBook {
     /// Asks sorted by price ascending (best ask first).
     pub asks: BTreeMap<Decimal, Decimal>,
     pub last_update_id: u64,
+    /// Timestamp (ms) of the last update applied.
+    pub updated_at_ms: u64,
 }
 
 impl OrderBook {
@@ -27,7 +29,22 @@ impl OrderBook {
             bids: BTreeMap::new(),
             asks: BTreeMap::new(),
             last_update_id: 0,
+            updated_at_ms: 0,
         }
+    }
+
+    /// Returns the age of this order book in milliseconds.
+    pub fn age_ms(&self) -> u64 {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time went backwards")
+            .as_millis() as u64;
+        now.saturating_sub(self.updated_at_ms)
+    }
+
+    /// Returns true if this order book has not been updated recently.
+    pub fn is_stale(&self, max_age_ms: u64) -> bool {
+        self.updated_at_ms == 0 || self.age_ms() > max_age_ms
     }
 
     /// Best bid price (highest).
@@ -59,6 +76,10 @@ impl OrderBook {
         if diff.last_update_id > self.last_update_id {
             self.last_update_id = diff.last_update_id;
         }
+        self.updated_at_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time went backwards")
+            .as_millis() as u64;
     }
 
     /// Walk the ask side to compute the effective price and max fillable quantity
@@ -247,6 +268,23 @@ mod tests {
 
         // Buy 10.0: not enough liquidity
         assert!(ob.walk_asks(dec!(10.0)).is_none());
+    }
+
+    #[test]
+    fn test_staleness() {
+        let ob = OrderBook::new("TEST".into());
+        assert!(ob.is_stale(1000)); // never updated = stale
+
+        let mut ob2 = OrderBook::new("TEST".into());
+        let diff = DepthDiff {
+            symbol: "TEST".into(),
+            bids: vec![PriceLevel { price: dec!(100), quantity: dec!(1.0) }],
+            asks: vec![],
+            first_update_id: 1,
+            last_update_id: 1,
+        };
+        ob2.apply_diff(&diff);
+        assert!(!ob2.is_stale(1000)); // just updated
     }
 
     #[test]
