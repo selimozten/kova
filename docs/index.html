@@ -1,0 +1,791 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>kova — Triangular Arbitrage Engine</title>
+  <meta name="description" content="High-performance triangular arbitrage engine for cryptocurrency markets. Rust-powered, multi-exchange, with built-in risk management and paper trading.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #111116;
+      --bg-deep: #0c0c10;
+      --bg-surface: #1a1a22;
+      --bg-card: rgba(24, 24, 34, 0.7);
+      --accent: #e6a032;
+      --accent-glow: rgba(230, 160, 50, 0.1);
+      --accent-hover: #f0b654;
+      --accent-dim: #b07820;
+      --text: #e8e8f0;
+      --text-secondary: #9494ab;
+      --text-muted: #5e5e74;
+      --border: rgba(230, 160, 50, 0.1);
+      --border-strong: rgba(230, 160, 50, 0.22);
+      --green: #50c878;
+      --red: #e05050;
+      --font-display: 'Chakra Petch', sans-serif;
+      --font-body: 'IBM Plex Sans', sans-serif;
+      --font-mono: 'IBM Plex Mono', monospace;
+    }
+
+    [data-theme="light"] {
+      --bg: #f6f5f2;
+      --bg-deep: #edecea;
+      --bg-surface: #ffffff;
+      --bg-card: rgba(255, 255, 255, 0.8);
+      --accent: #b07820;
+      --accent-glow: rgba(176, 120, 32, 0.07);
+      --accent-hover: #c88a28;
+      --accent-dim: #8a5e18;
+      --text: #1a1a22;
+      --text-secondary: #5e5e6e;
+      --text-muted: #9494a4;
+      --border: rgba(0, 0, 0, 0.08);
+      --border-strong: rgba(176, 120, 32, 0.25);
+      --green: #2d9050;
+      --red: #c03838;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: var(--font-body);
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.65;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      overflow-x: hidden;
+      transition: background 0.3s, color 0.3s;
+    }
+
+    a { color: var(--accent); text-decoration: none; transition: color 0.2s; }
+    a:hover { color: var(--accent-hover); }
+
+    /* ===== Theme toggle ===== */
+    .theme-toggle {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      z-index: 100;
+      width: 40px;
+      height: 40px;
+      border-radius: 10px;
+      border: 1px solid var(--border-strong);
+      background: var(--bg-surface);
+      color: var(--text-secondary);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.25s;
+      backdrop-filter: blur(12px);
+    }
+    .theme-toggle:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+      transform: scale(1.05);
+    }
+    .theme-toggle svg { width: 18px; height: 18px; }
+    .theme-toggle .icon-sun { display: none; }
+    [data-theme="dark"] .theme-toggle .icon-moon { display: none; }
+    [data-theme="dark"] .theme-toggle .icon-sun { display: block; }
+    [data-theme="light"] .theme-toggle .icon-moon { display: none; }
+    [data-theme="light"] .theme-toggle .icon-sun { display: block; }
+
+    /* ===== Noise overlay (dark only) ===== */
+    body::after {
+      content: '';
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 9999;
+      opacity: 0.02;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+      background-size: 200px;
+      transition: opacity 0.3s;
+    }
+    [data-theme="light"] body::after { opacity: 0; }
+
+    /* ===== Scroll animations ===== */
+    .reveal {
+      opacity: 0;
+      transform: translateY(24px);
+      transition: opacity 0.6s cubic-bezier(0.16, 1, 0.3, 1),
+                  transform 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .reveal.visible { opacity: 1; transform: translateY(0); }
+    .reveal-d1 { transition-delay: 0.07s; }
+    .reveal-d2 { transition-delay: 0.14s; }
+    .reveal-d3 { transition-delay: 0.21s; }
+    .reveal-d4 { transition-delay: 0.28s; }
+    .reveal-d5 { transition-delay: 0.35s; }
+
+    /* ===== Layout ===== */
+    .container { max-width: 900px; margin: 0 auto; padding: 0 28px; }
+    .section-label {
+      font-family: var(--font-mono);
+      font-size: 0.68rem;
+      font-weight: 500;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .section-label::before {
+      content: '';
+      width: 16px;
+      height: 1px;
+      background: var(--accent);
+    }
+    .section-title {
+      font-family: var(--font-display);
+      font-size: 1.8rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      line-height: 1.2;
+      margin-bottom: 12px;
+    }
+    .section-desc {
+      color: var(--text-secondary);
+      font-size: 0.92rem;
+      max-width: 480px;
+      margin-bottom: 36px;
+    }
+    .divider {
+      height: 1px;
+      background: linear-gradient(90deg, transparent 0%, var(--border-strong) 50%, transparent 100%);
+    }
+
+    /* ===== Hero ===== */
+    .hero {
+      position: relative;
+      padding: 100px 0 72px;
+      text-align: center;
+      overflow: hidden;
+    }
+    .hero-grid {
+      position: absolute;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(230, 160, 50, 0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(230, 160, 50, 0.03) 1px, transparent 1px);
+      background-size: 48px 48px;
+      mask-image: radial-gradient(ellipse 65% 55% at 50% 40%, black 10%, transparent 70%);
+      -webkit-mask-image: radial-gradient(ellipse 65% 55% at 50% 40%, black 10%, transparent 70%);
+    }
+    [data-theme="light"] .hero-grid { opacity: 0.5; }
+    .hero-glow {
+      position: absolute;
+      width: 500px;
+      height: 350px;
+      top: -60px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: radial-gradient(ellipse, rgba(230, 160, 50, 0.08) 0%, transparent 70%);
+      pointer-events: none;
+    }
+    [data-theme="light"] .hero-glow { opacity: 0.4; }
+    .hero .container { position: relative; z-index: 1; }
+    .hero-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 5px 14px;
+      border-radius: 100px;
+      border: 1px solid var(--border-strong);
+      background: var(--bg-card);
+      backdrop-filter: blur(12px);
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      font-weight: 500;
+      color: var(--text-secondary);
+      letter-spacing: 0.04em;
+      margin-bottom: 24px;
+    }
+    .hero-badge .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 8px rgba(80, 200, 120, 0.5);
+    }
+    .hero h1 {
+      font-family: var(--font-display);
+      font-size: clamp(2.6rem, 6vw, 4rem);
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      line-height: 1.05;
+      margin-bottom: 16px;
+    }
+    .hero h1 .gradient {
+      background: linear-gradient(135deg, var(--accent) 0%, #f0d080 50%, var(--accent) 100%);
+      background-size: 200% auto;
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      animation: shimmer 6s ease-in-out infinite;
+    }
+    [data-theme="light"] .hero h1 .gradient {
+      background: linear-gradient(135deg, var(--accent) 0%, #d4a030 50%, var(--accent) 100%);
+      background-size: 200% auto;
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    @keyframes shimmer {
+      0%, 100% { background-position: 0% center; }
+      50% { background-position: 200% center; }
+    }
+    .hero-sub {
+      font-size: 1.08rem;
+      color: var(--text-secondary);
+      max-width: 440px;
+      margin: 0 auto 32px;
+      line-height: 1.6;
+    }
+    .hero-actions {
+      display: flex;
+      gap: 12px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 11px 24px;
+      border-radius: 8px;
+      font-family: var(--font-body);
+      font-size: 0.88rem;
+      font-weight: 600;
+      border: none;
+      cursor: pointer;
+      transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+      box-shadow: 0 2px 16px rgba(230, 160, 50, 0.2), inset 0 1px 0 rgba(255,255,255,0.1);
+    }
+    .btn-primary:hover {
+      background: var(--accent-hover);
+      color: #fff;
+      transform: translateY(-1px);
+      box-shadow: 0 4px 24px rgba(230, 160, 50, 0.3);
+    }
+    .btn-ghost {
+      background: transparent;
+      color: var(--text-secondary);
+      border: 1px solid var(--border-strong);
+    }
+    .btn-ghost:hover {
+      color: var(--text);
+      border-color: var(--accent);
+      background: var(--accent-glow);
+    }
+    .btn svg { width: 16px; height: 16px; }
+
+    /* ===== How it works ===== */
+    .flow-section { padding: 72px 0; background: var(--bg-deep); transition: background 0.3s; }
+    .flow-track {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 2px;
+      position: relative;
+    }
+    .flow-track::before {
+      content: '';
+      position: absolute;
+      top: 28px;
+      left: 40px;
+      right: 40px;
+      height: 2px;
+      background: linear-gradient(90deg, var(--accent-dim), var(--accent), var(--accent-dim));
+      opacity: 0.2;
+      z-index: 0;
+    }
+    .flow-step {
+      position: relative;
+      z-index: 1;
+      text-align: center;
+      padding: 0 16px;
+    }
+    .flow-num {
+      width: 56px;
+      height: 56px;
+      margin: 0 auto 18px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 14px;
+      border: 1px solid var(--border-strong);
+      background: var(--bg-surface);
+      position: relative;
+      transition: background 0.3s, border-color 0.3s;
+    }
+    .flow-num svg { width: 22px; height: 22px; color: var(--accent); }
+    .flow-num .idx {
+      position: absolute;
+      top: -6px;
+      right: -6px;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: var(--accent);
+      color: #fff;
+      font-family: var(--font-display);
+      font-size: 0.6rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .flow-step h3 {
+      font-family: var(--font-display);
+      font-size: 0.92rem;
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+    .flow-step p { font-size: 0.8rem; color: var(--text-secondary); line-height: 1.5; }
+
+    /* ===== Features ===== */
+    .features-section { padding: 72px 0; }
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 2px;
+    }
+    .feat {
+      padding: 24px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--bg-card);
+      transition: border-color 0.25s, box-shadow 0.25s, background 0.3s;
+    }
+    .feat:hover {
+      border-color: var(--border-strong);
+      box-shadow: 0 0 0 1px var(--border), inset 0 0 32px var(--accent-glow);
+    }
+    .feat-icon {
+      width: 36px;
+      height: 36px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 9px;
+      background: var(--accent-glow);
+      border: 1px solid var(--border);
+      margin-bottom: 14px;
+      transition: background 0.3s, border-color 0.3s;
+    }
+    .feat-icon svg { width: 18px; height: 18px; color: var(--accent); }
+    .feat h3 {
+      font-family: var(--font-display);
+      font-size: 0.88rem;
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+    .feat p { font-size: 0.8rem; color: var(--text-secondary); line-height: 1.5; }
+
+    /* ===== Usage ===== */
+    .usage-section { padding: 72px 0; background: var(--bg-deep); transition: background 0.3s; }
+    .usage-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 14px;
+    }
+    .usage-card {
+      padding: 24px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: var(--bg-card);
+      transition: border-color 0.25s, background 0.3s;
+    }
+    .usage-card:hover { border-color: var(--border-strong); }
+    .usage-card .cmd-label {
+      font-family: var(--font-mono);
+      font-size: 0.65rem;
+      font-weight: 500;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 6px;
+    }
+    .usage-card h3 {
+      font-family: var(--font-display);
+      font-size: 0.95rem;
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+    .usage-card p { font-size: 0.8rem; color: var(--text-secondary); line-height: 1.45; }
+    .usage-card code {
+      display: block;
+      margin-top: 10px;
+      padding: 8px 12px;
+      border-radius: 6px;
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      color: var(--green);
+      transition: background 0.3s, border-color 0.3s;
+    }
+
+    /* ===== Build ===== */
+    .build-section { padding: 72px 0; }
+    pre {
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 20px 24px;
+      overflow-x: auto;
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      line-height: 1.7;
+      color: var(--text-secondary);
+      transition: background 0.3s, border-color 0.3s;
+    }
+    pre .prompt { color: var(--text-muted); user-select: none; }
+    pre .cmd { color: var(--green); }
+    pre .flag { color: var(--accent); }
+    pre .comment { color: var(--text-muted); font-style: italic; }
+
+    /* ===== Config example ===== */
+    .config-section { padding: 72px 0; background: var(--bg-deep); transition: background 0.3s; }
+
+    /* ===== Footer ===== */
+    footer {
+      padding: 40px 0;
+      border-top: 1px solid var(--border);
+      transition: border-color 0.3s;
+    }
+    .footer-inner {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .footer-left {
+      font-family: var(--font-display);
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--text-secondary);
+    }
+    .footer-links {
+      display: flex;
+      gap: 24px;
+    }
+    .footer-links a {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      transition: color 0.2s;
+    }
+    .footer-links a:hover { color: var(--accent); }
+    .footer-links a svg { width: 15px; height: 15px; }
+
+    /* ===== Responsive ===== */
+    @media (max-width: 760px) {
+      .flow-track { grid-template-columns: 1fr; gap: 20px; }
+      .flow-track::before { display: none; }
+      .features-grid { grid-template-columns: 1fr; }
+      .usage-grid { grid-template-columns: 1fr; }
+      .footer-inner { flex-direction: column; gap: 16px; text-align: center; }
+      .footer-links { flex-wrap: wrap; justify-content: center; }
+    }
+    @media (max-width: 480px) {
+      .hero { padding: 72px 0 52px; }
+      .hero-sub { font-size: 0.95rem; }
+      .section-title { font-size: 1.5rem; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Theme toggle -->
+  <button class="theme-toggle" onclick="toggleTheme()" aria-label="Toggle dark/light mode">
+    <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+    <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+  </button>
+
+  <!-- ====== HERO ====== -->
+  <header class="hero">
+    <div class="hero-grid"></div>
+    <div class="hero-glow"></div>
+    <div class="container">
+      <div class="reveal">
+        <div class="hero-badge">
+          <span class="dot"></span>
+          Rust &middot; async &middot; zero-copy
+        </div>
+      </div>
+      <h1 class="reveal reveal-d1"><span class="gradient">kova</span></h1>
+      <p class="hero-sub reveal reveal-d2">Triangular arbitrage engine for cryptocurrency markets. Detect, evaluate, and execute — with built-in risk management.</p>
+      <div class="hero-actions reveal reveal-d3">
+        <a href="https://github.com/selimozten/kova" class="btn btn-primary" target="_blank" rel="noopener">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+          Source
+        </a>
+        <a href="#usage" class="btn btn-ghost">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+          Get Started
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <div class="divider"></div>
+
+  <!-- ====== HOW IT WORKS ====== -->
+  <section class="flow-section">
+    <div class="container">
+      <div class="reveal">
+        <div class="section-label">How it works</div>
+        <h2 class="section-title">Three-leg cycle</h2>
+        <p class="section-desc">Start with USDT, traverse three markets, return with more than you started.</p>
+      </div>
+
+      <div class="flow-track">
+        <div class="flow-step reveal reveal-d1">
+          <div class="flow-num">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <span class="idx">1</span>
+          </div>
+          <h3>Discover</h3>
+          <p>Scan all exchange symbols. Build a graph and find every valid three-hop cycle back to your start asset.</p>
+        </div>
+        <div class="flow-step reveal reveal-d2">
+          <div class="flow-num">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></svg>
+            <span class="idx">2</span>
+          </div>
+          <h3>Evaluate</h3>
+          <p>Stream live order books via WebSocket. Walk bids and asks to compute effective prices, fees, and slippage.</p>
+        </div>
+        <div class="flow-step reveal reveal-d3">
+          <div class="flow-num">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+            <span class="idx">3</span>
+          </div>
+          <h3>Execute</h3>
+          <p>Place three sequential market orders. Risk manager validates each leg. Automatic unwind on failure.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="divider"></div>
+
+  <!-- ====== FEATURES ====== -->
+  <section class="features-section">
+    <div class="container">
+      <div class="reveal">
+        <div class="section-label">Features</div>
+        <h2 class="section-title">Built for speed and safety</h2>
+        <p class="section-desc">Async Rust, lock-free data structures, and multiple layers of risk protection.</p>
+      </div>
+
+      <div class="features-grid">
+        <div class="feat reveal reveal-d1">
+          <div class="feat-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+          </div>
+          <h3>Async Engine</h3>
+          <p>Tokio-powered concurrent pipeline. WebSocket, detector, executor, and stats run as independent tasks.</p>
+        </div>
+        <div class="feat reveal reveal-d2">
+          <div class="feat-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          </div>
+          <h3>Risk Management</h3>
+          <p>Kill switch on consecutive losses or session loss limits. Min profit threshold, max trade size, and slippage buffer.</p>
+        </div>
+        <div class="feat reveal reveal-d3">
+          <div class="feat-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+          </div>
+          <h3>Paper Trading</h3>
+          <p>Dry-run mode with live market data. Every opportunity logged to a JSONL journal queryable with DuckDB.</p>
+        </div>
+        <div class="feat reveal reveal-d1">
+          <div class="feat-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          </div>
+          <h3>Multi-Exchange</h3>
+          <p>Generic Exchange trait with static dispatch. Currently supports Binance and Paribu. Add new exchanges in a module.</p>
+        </div>
+        <div class="feat reveal reveal-d2">
+          <div class="feat-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+          </div>
+          <h3>Auto Discovery</h3>
+          <p>Fetches all exchange symbols, builds an adjacency graph, and finds every triangle path. No manual configuration.</p>
+        </div>
+        <div class="feat reveal reveal-d3">
+          <div class="feat-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+          </div>
+          <h3>Live Analysis</h3>
+          <p>Periodic stats (win rate, PnL, evaluations). Post-session analysis via <code style="font-size:0.75rem;padding:1px 5px;border-radius:3px;background:var(--bg-surface);border:1px solid var(--border);">kova analyze</code> or DuckDB.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="divider"></div>
+
+  <!-- ====== USAGE ====== -->
+  <section class="usage-section" id="usage">
+    <div class="container">
+      <div class="reveal">
+        <div class="section-label">Usage</div>
+        <h2 class="section-title">CLI commands</h2>
+        <p class="section-desc">Six subcommands. From discovery to post-trade analysis.</p>
+      </div>
+
+      <div class="usage-grid">
+        <div class="usage-card reveal reveal-d1">
+          <div class="cmd-label">discover</div>
+          <h3>Find Triangles</h3>
+          <p>Scan all exchange symbols and list valid triangle paths for a start asset.</p>
+          <code>kova discover --start-asset USDT</code>
+        </div>
+        <div class="usage-card reveal reveal-d2">
+          <div class="cmd-label">dry-run</div>
+          <h3>Paper Trade</h3>
+          <p>Stream live data, detect opportunities, log theoretical trades — no real orders.</p>
+          <code>kova dry-run --config kova.toml</code>
+        </div>
+        <div class="usage-card reveal reveal-d3">
+          <div class="cmd-label">run</div>
+          <h3>Live Trading</h3>
+          <p>Execute real trades through the full pipeline with risk management enabled.</p>
+          <code>kova run --config kova.toml</code>
+        </div>
+        <div class="usage-card reveal reveal-d4">
+          <div class="cmd-label">analyze</div>
+          <h3>Review Results</h3>
+          <p>Parse the JSONL trade journal and compute win rate, PnL, and top paths.</p>
+          <code>kova analyze --journal kova-journal.jsonl</code>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="divider"></div>
+
+  <!-- ====== BUILD ====== -->
+  <section class="build-section">
+    <div class="container">
+      <div class="reveal">
+        <div class="section-label">Install</div>
+        <h2 class="section-title">Build from source</h2>
+        <p class="section-desc">Requires Rust 1.75+. Clone, build, configure, run.</p>
+      </div>
+
+      <div class="reveal">
+        <pre><span class="comment"># Clone and build</span>
+<span class="prompt">$ </span><span class="cmd">git clone</span> https://github.com/selimozten/kova.git
+<span class="prompt">$ </span><span class="cmd">cd</span> kova
+<span class="prompt">$ </span><span class="cmd">cargo</span> build <span class="flag">--release</span>
+
+<span class="comment"># Configure</span>
+<span class="prompt">$ </span><span class="cmd">cp</span> kova.toml.example kova.toml
+<span class="prompt">$ </span><span class="cmd">$EDITOR</span> kova.toml  <span class="comment"># set api_key and api_secret</span>
+
+<span class="comment"># Paper trade</span>
+<span class="prompt">$ </span><span class="cmd">./target/release/kova</span> dry-run</pre>
+      </div>
+    </div>
+  </section>
+
+  <div class="divider"></div>
+
+  <!-- ====== CONFIG ====== -->
+  <section class="config-section">
+    <div class="container">
+      <div class="reveal">
+        <div class="section-label">Configuration</div>
+        <h2 class="section-title">kova.toml</h2>
+        <p class="section-desc">TOML config with sensible defaults. Only API keys are required.</p>
+      </div>
+
+      <div class="reveal">
+        <pre><span class="comment"># kova.toml</span>
+[general]
+start_asset = <span class="flag">"USDT"</span>
+trade_amount = <span class="flag">100.0</span>
+dry_run = <span class="flag">true</span>
+
+[exchange]
+name = <span class="flag">"binance"</span>
+api_key = <span class="flag">"YOUR_KEY"</span>
+api_secret = <span class="flag">"YOUR_SECRET"</span>
+
+[risk]
+min_profit_pct = <span class="flag">0.15</span>      <span class="comment"># minimum 0.15% profit to trigger</span>
+max_trade_size = <span class="flag">500.0</span>     <span class="comment"># cap per trade</span>
+max_session_loss = <span class="flag">50.0</span>    <span class="comment"># kill switch threshold</span>
+slippage_buffer_bps = <span class="flag">2.0</span> <span class="comment"># basis points buffer</span>
+cooldown_ms = <span class="flag">500</span>          <span class="comment"># ms between trades</span></pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- ====== FOOTER ====== -->
+  <footer>
+    <div class="container">
+      <div class="footer-inner">
+        <div class="footer-left">kova</div>
+        <div class="footer-links">
+          <a href="https://github.com/selimozten/kova" target="_blank" rel="noopener">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+            Source
+          </a>
+          <a href="https://github.com/selimozten/kova/releases" target="_blank" rel="noopener">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+            Releases
+          </a>
+          <a href="https://github.com/selimozten/kova/blob/main/LICENSE" target="_blank" rel="noopener">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            MIT License
+          </a>
+        </div>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    // Theme toggle
+    function toggleTheme() {
+      const html = document.documentElement;
+      const next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+      html.setAttribute('data-theme', next);
+      localStorage.setItem('kova-theme', next);
+    }
+    // Restore saved theme
+    (function() {
+      const saved = localStorage.getItem('kova-theme');
+      if (saved) document.documentElement.setAttribute('data-theme', saved);
+    })();
+
+    // Scroll reveal
+    const obs = new IntersectionObserver((entries) => {
+      entries.forEach(e => {
+        if (e.isIntersecting) { e.target.classList.add('visible'); obs.unobserve(e.target); }
+      });
+    }, { threshold: 0.1, rootMargin: '0px 0px -30px 0px' });
+    document.querySelectorAll('.reveal').forEach(el => obs.observe(el));
+  </script>
+
+</body>
+</html>
