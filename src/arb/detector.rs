@@ -186,14 +186,14 @@ pub async fn run_detector(
             let path = &paths[idx];
             let ob_clone = order_books.clone();
 
-            // Skip if any leg's order book is stale
-            let any_stale = path.legs.iter().any(|leg| {
+            // Skip if any leg's order book is stale or too thin
+            let any_unusable = path.legs.iter().any(|leg| {
                 ob_clone
                     .get(&leg.symbol)
-                    .map(|ob| ob.is_stale(max_ob_age_ms))
+                    .map(|ob| ob.is_stale(max_ob_age_ms) || !ob.has_depth(3))
                     .unwrap_or(true)
             });
-            if any_stale {
+            if any_unusable {
                 continue;
             }
 

@@ -47,6 +47,29 @@ impl OrderBook {
         self.updated_at_ms == 0 || self.age_ms() > max_age_ms
     }
 
+    /// Returns the spread between best bid and ask, or None if either side is empty.
+    pub fn spread(&self) -> Option<Decimal> {
+        let bid = self.best_bid()?;
+        let ask = self.best_ask()?;
+        Some(*ask - *bid)
+    }
+
+    /// Returns the spread as a percentage of the midpoint price.
+    pub fn spread_bps(&self) -> Option<Decimal> {
+        let bid = *self.best_bid()?;
+        let ask = *self.best_ask()?;
+        let mid = (bid + ask) / Decimal::TWO;
+        if mid.is_zero() {
+            return None;
+        }
+        Some((ask - bid) / mid * Decimal::new(10000, 0))
+    }
+
+    /// Returns true if the book has at least `n` levels on both sides.
+    pub fn has_depth(&self, n: usize) -> bool {
+        self.bids.len() >= n && self.asks.len() >= n
+    }
+
     /// Best bid price (highest).
     pub fn best_bid(&self) -> Option<&Decimal> {
         self.bids.keys().next_back()
@@ -268,6 +291,35 @@ mod tests {
 
         // Buy 10.0: not enough liquidity
         assert!(ob.walk_asks(dec!(10.0)).is_none());
+    }
+
+    #[test]
+    fn test_spread() {
+        let mut ob = OrderBook::new("TEST".into());
+        assert!(ob.spread().is_none());
+
+        ob.bids.insert(dec!(100), dec!(1.0));
+        ob.asks.insert(dec!(101), dec!(1.0));
+        assert_eq!(ob.spread(), Some(dec!(1)));
+
+        let bps = ob.spread_bps().unwrap();
+        // spread = 1, mid = 100.5, bps = 1/100.5 * 10000 ≈ 99.5
+        assert!(bps > dec!(99) && bps < dec!(100));
+    }
+
+    #[test]
+    fn test_has_depth() {
+        let mut ob = OrderBook::new("TEST".into());
+        assert!(!ob.has_depth(1));
+
+        ob.bids.insert(dec!(100), dec!(1.0));
+        ob.asks.insert(dec!(101), dec!(1.0));
+        assert!(ob.has_depth(1));
+        assert!(!ob.has_depth(2));
+
+        ob.bids.insert(dec!(99), dec!(1.0));
+        ob.asks.insert(dec!(102), dec!(1.0));
+        assert!(ob.has_depth(2));
     }
 
     #[test]
