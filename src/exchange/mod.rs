@@ -1,4 +1,5 @@
 pub mod binance;
+pub mod paribu;
 pub mod types;
 
 use std::collections::HashMap;

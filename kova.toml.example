@@ -32,3 +32,30 @@ cooldown_ms = 500
 [monitoring]
 print_opportunities = true
 stats_interval_secs = 10
+
+# --- Paribu example config ---
+# [general]
+# start_asset = "TL"
+# trade_amount = 1000.0
+# dry_run = true
+# log_level = "info"
+#
+# [exchange]
+# name = "paribu"
+# api_key = "YOUR_PARIBU_API_KEY"
+# api_secret = "YOUR_PARIBU_API_SECRET"
+# # base_url = "https://api.paribu.com"
+# # ws_url = "wss://stream.paribu.com"
+#
+# [exchange.fees]
+# maker = 0.001
+# taker = 0.002
+#
+# [triangles]
+# auto_discover = true
+# start_assets = ["TL"]
+#
+# [risk]
+# min_profit_pct = 0.15
+# max_trade_size = 5000.0
+# max_session_loss = 500.0

@@ -13,6 +13,7 @@ use tracing_subscriber::EnvFilter;
 
 use config::Config;
 use exchange::binance::BinanceExchange;
+use exchange::paribu::ParibuExchange;
 use exchange::Exchange;
 
 #[derive(Parser)]
@@ -91,27 +92,32 @@ async fn main() -> Result<()> {
             let start = start_asset.unwrap_or(config.general.start_asset.clone());
             println!("discovering triangles for {} on {}...", start, config.exchange.name);
 
-            let exchange = create_exchange(&config).await?;
-            let symbols = exchange.get_all_symbols().await?;
-            let paths = arb::detector::discover_triangles(&symbols, &[start]);
-
-            println!("found {} triangle paths:", paths.len());
-            for (i, path) in paths.iter().enumerate() {
-                println!("  {:>4}. {}", i + 1, path);
+            match config.exchange.name.as_str() {
+                "binance" => {
+                    let exchange = BinanceExchange::new(&config).await?;
+                    discover_and_print(&exchange, &start).await?;
+                }
+                "paribu" => {
+                    let exchange = ParibuExchange::new(&config).await?;
+                    discover_and_print(&exchange, &start).await?;
+                }
+                other => anyhow::bail!("unsupported exchange: {other}"),
             }
         }
         Commands::Balances { config: path } => {
             let config = Config::load(&path)?;
             init_tracing("warn");
 
-            let exchange = create_exchange(&config).await?;
-            let balances = exchange.get_balances().await?;
-
-            println!("balances on {}:", config.exchange.name);
-            let mut sorted: Vec<_> = balances.into_iter().collect();
-            sorted.sort_by(|a, b| b.1.cmp(&a.1));
-            for (asset, amount) in sorted {
-                println!("  {:<8} {}", asset, amount);
+            match config.exchange.name.as_str() {
+                "binance" => {
+                    let exchange = BinanceExchange::new(&config).await?;
+                    print_balances(&exchange, "binance").await?;
+                }
+                "paribu" => {
+                    let exchange = ParibuExchange::new(&config).await?;
+                    print_balances(&exchange, "paribu").await?;
+                }
+                other => anyhow::bail!("unsupported exchange: {other}"),
             }
         }
     }
@@ -125,15 +131,33 @@ async fn run_with_exchange(config: Config) -> Result<()> {
             let exchange = BinanceExchange::new(&config).await?;
             engine::run_engine(exchange, config).await
         }
+        "paribu" => {
+            let exchange = ParibuExchange::new(&config).await?;
+            engine::run_engine(exchange, config).await
+        }
         other => anyhow::bail!("unsupported exchange: {other}"),
     }
 }
 
-async fn create_exchange(config: &Config) -> Result<BinanceExchange> {
-    match config.exchange.name.as_str() {
-        "binance" => Ok(BinanceExchange::new(config).await?),
-        other => anyhow::bail!("unsupported exchange: {other}"),
+async fn discover_and_print(exchange: &impl Exchange, start: &str) -> Result<()> {
+    let symbols = exchange.get_all_symbols().await?;
+    let paths = arb::detector::discover_triangles(&symbols, &[start.to_string()]);
+    println!("found {} triangle paths:", paths.len());
+    for (i, path) in paths.iter().enumerate() {
+        println!("  {:>4}. {}", i + 1, path);
     }
+    Ok(())
+}
+
+async fn print_balances(exchange: &impl Exchange, name: &str) -> Result<()> {
+    let balances = exchange.get_balances().await?;
+    println!("balances on {}:", name);
+    let mut sorted: Vec<_> = balances.into_iter().collect();
+    sorted.sort_by(|a, b| b.1.cmp(&a.1));
+    for (asset, amount) in sorted {
+        println!("  {:<8} {}", asset, amount);
+    }
+    Ok(())
 }
 
 fn init_tracing(level: &str) {
