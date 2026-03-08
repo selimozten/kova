@@ -23,6 +23,7 @@ pub async fn subscribe_depth(
 
     info!("connecting to Paribu WS: {} streams", symbols.len());
 
+    let mut reconnect_count: u32 = 0;
     loop {
         match connect_and_stream(ws_url, symbols, &tx).await {
             Ok(()) => {
@@ -30,7 +31,8 @@ pub async fn subscribe_depth(
                 break;
             }
             Err(e) => {
-                error!("Paribu WebSocket error: {e}, reconnecting in 5s...");
+                reconnect_count += 1;
+                error!("Paribu WebSocket error: {e}, reconnecting in 5s... (attempt #{})", reconnect_count);
                 tokio::time::sleep(std::time::Duration::from_secs(5)).await;
             }
         }
