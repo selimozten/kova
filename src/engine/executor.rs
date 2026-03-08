@@ -131,6 +131,16 @@ impl<E: Exchange> Executor<E> {
                         i + 1, rounded, info.min_qty
                     ));
                 }
+                // Check min notional (price * qty must exceed exchange minimum)
+                if info.min_notional > Decimal::ZERO {
+                    let notional = leg.effective_price * rounded;
+                    if notional < info.min_notional {
+                        return Err(format!(
+                            "leg {} notional {} below min {}",
+                            i + 1, notional, info.min_notional
+                        ));
+                    }
+                }
                 rounded
             } else {
                 leg.quantity
