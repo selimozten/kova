@@ -167,6 +167,7 @@ mod tests {
             end_amount: start_amount + (start_amount * profit_pct / dec!(100)),
             profit_amount: start_amount * profit_pct / dec!(100),
             profit_pct,
+            detected_at_ms: 0,
         }
     }
 

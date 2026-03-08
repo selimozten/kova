@@ -1,9 +1,10 @@
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use dashmap::DashMap;
 use rust_decimal::Decimal;
 use tokio::sync::mpsc;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::arb::types::ArbitrageOpportunity;
 use crate::exchange::types::{OrderRequest, OrderSide, OrderStatus, OrderType, SymbolInfo};
@@ -45,6 +46,17 @@ impl<E: Exchange> Executor<E> {
     }
 
     async fn handle_opportunity(&self, opp: ArbitrageOpportunity) {
+        // Reject stale opportunities (>2s old by the time we process them)
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time went backwards")
+            .as_millis() as u64;
+        let age_ms = now_ms.saturating_sub(opp.detected_at_ms);
+        if age_ms > 2000 {
+            debug!("dropping stale opportunity ({}ms old): {}", age_ms, opp.path);
+            return;
+        }
+
         // Pre-trade risk checks
         if !self.risk.pre_trade_check(&opp) {
             return;

@@ -42,6 +42,8 @@ pub struct ArbitrageOpportunity {
     pub end_amount: Decimal,
     pub profit_amount: Decimal,
     pub profit_pct: Decimal,
+    /// When this opportunity was detected (epoch ms).
+    pub detected_at_ms: u64,
 }
 
 impl std::fmt::Display for ArbitrageOpportunity {

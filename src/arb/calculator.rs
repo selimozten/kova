@@ -1,3 +1,5 @@
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 
@@ -31,6 +33,11 @@ pub fn evaluate_triangle(
 
     let legs_arr: [LegDetail; 3] = legs.try_into().ok()?;
 
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time went backwards")
+        .as_millis() as u64;
+
     Some(ArbitrageOpportunity {
         path: path.clone(),
         legs: legs_arr,
@@ -38,6 +45,7 @@ pub fn evaluate_triangle(
         end_amount: current_amount,
         profit_amount,
         profit_pct,
+        detected_at_ms: now_ms,
     })
 }
 
