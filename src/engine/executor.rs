@@ -97,9 +97,11 @@ impl<E: Exchange> Executor<E> {
                 info!("trade completed, actual profit: {}", actual_profit);
                 self.risk.record_trade(actual_profit);
             }
-            Err(e) => {
-                error!("trade failed at leg: {e}");
-                // Record as loss for risk tracking
+            Err((failed_leg, held_asset, held_amount, msg)) => {
+                error!("trade failed at leg {}: {}", failed_leg + 1, msg);
+                if failed_leg > 0 && held_amount > Decimal::ZERO {
+                    self.attempt_unwind(&opp, failed_leg, &held_asset, held_amount).await;
+                }
                 self.risk.record_trade(-opp.start_amount * Decimal::new(1, 2));
             }
         }
@@ -110,10 +112,16 @@ impl<E: Exchange> Executor<E> {
         }
     }
 
-    async fn execute_legs(&self, opp: &ArbitrageOpportunity) -> Result<Decimal, String> {
+    /// Execute legs sequentially. On failure returns (failed_leg_index, held_asset, held_amount, error_msg).
+    async fn execute_legs(
+        &self,
+        opp: &ArbitrageOpportunity,
+    ) -> Result<Decimal, (usize, String, Decimal, String)> {
         let mut current_amount = opp.start_amount;
+        // Track what asset we're currently holding for unwind purposes
+        let mut current_asset = opp.path.start_asset.clone();
 
-        for (i, leg) in opp.legs.iter().enumerate() {
+        for (i, (leg, path_leg)) in opp.legs.iter().zip(opp.path.legs.iter()).enumerate() {
             info!(
                 "leg {}: {} {} qty={} (input={})",
                 i + 1,
@@ -126,18 +134,21 @@ impl<E: Exchange> Executor<E> {
             let quantity = if let Some(info) = self.symbol_info.get(&leg.symbol) {
                 let rounded = round_to_step(leg.quantity, info.step_size);
                 if rounded < info.min_qty {
-                    return Err(format!(
-                        "leg {} qty {} below min {}",
-                        i + 1, rounded, info.min_qty
+                    return Err((
+                        i,
+                        current_asset,
+                        current_amount,
+                        format!("qty {} below min {}", rounded, info.min_qty),
                     ));
                 }
-                // Check min notional (price * qty must exceed exchange minimum)
                 if info.min_notional > Decimal::ZERO {
                     let notional = leg.effective_price * rounded;
                     if notional < info.min_notional {
-                        return Err(format!(
-                            "leg {} notional {} below min {}",
-                            i + 1, notional, info.min_notional
+                        return Err((
+                            i,
+                            current_asset,
+                            current_amount,
+                            format!("notional {} below min {}", notional, info.min_notional),
                         ));
                     }
                 }
@@ -161,37 +172,54 @@ impl<E: Exchange> Executor<E> {
                 client_order_id: Some(client_oid),
             };
 
-            let result = self
-                .exchange
-                .place_order(&request)
-                .await
-                .map_err(|e| format!("leg {} ({}): {}", i + 1, leg.symbol, e))?;
+            let result = match self.exchange.place_order(&request).await {
+                Ok(r) => r,
+                Err(e) => {
+                    return Err((
+                        i,
+                        current_asset,
+                        current_amount,
+                        format!("{}: {}", leg.symbol, e),
+                    ));
+                }
+            };
+
+            if result.status == OrderStatus::Rejected {
+                return Err((
+                    i,
+                    current_asset,
+                    current_amount,
+                    format!("{} rejected", leg.symbol),
+                ));
+            }
+
+            if result.executed_quantity.is_zero() {
+                return Err((
+                    i,
+                    current_asset,
+                    current_amount,
+                    format!("{} zero fill", leg.symbol),
+                ));
+            }
 
             if result.status != OrderStatus::Filled {
                 warn!(
-                    "leg {} not fully filled: {:?}, executed_qty={}",
+                    "leg {} partially filled: {:?}, executed_qty={}",
                     i + 1,
                     result.status,
                     result.executed_quantity
                 );
-
-                if result.status == OrderStatus::Rejected {
-                    return Err(format!("leg {} rejected", i + 1));
-                }
-
-                // Partial fill: could attempt unwind, but for MVP just continue
-                if result.executed_quantity.is_zero() {
-                    return Err(format!("leg {} zero fill", i + 1));
-                }
             }
 
-            // Update current amount for next leg
+            // Update current amount and asset for next leg
             match leg.side {
                 OrderSide::Buy => {
                     current_amount = result.executed_quantity;
+                    current_asset = path_leg.base_asset.clone();
                 }
                 OrderSide::Sell => {
                     current_amount = result.executed_quote_quantity;
+                    current_asset = path_leg.quote_asset.clone();
                 }
             }
 
@@ -206,5 +234,72 @@ impl<E: Exchange> Executor<E> {
 
         let actual_profit = current_amount - opp.start_amount;
         Ok(actual_profit)
+    }
+
+    /// Attempt to sell the held asset back to the start asset when a leg fails mid-triangle.
+    async fn attempt_unwind(
+        &self,
+        opp: &ArbitrageOpportunity,
+        failed_leg: usize,
+        held_asset: &str,
+        held_amount: Decimal,
+    ) {
+        warn!(
+            "attempting unwind: sell {} {} back to {}",
+            held_amount, held_asset, opp.path.start_asset
+        );
+
+        // Try to find a direct pair to convert back
+        // Look through the path legs we already traversed for a reverse route
+        for leg in &opp.path.legs[..failed_leg] {
+            let can_reverse = match leg.side {
+                OrderSide::Buy if leg.base_asset == held_asset => true,
+                OrderSide::Sell if leg.quote_asset == held_asset => true,
+                _ => false,
+            };
+
+            if can_reverse {
+                let (reverse_side, reverse_qty) = match leg.side {
+                    OrderSide::Buy => (OrderSide::Sell, held_amount),
+                    OrderSide::Sell => (OrderSide::Buy, held_amount),
+                };
+
+                let quantity = if let Some(info) = self.symbol_info.get(&leg.symbol) {
+                    round_to_step(reverse_qty, info.step_size)
+                } else {
+                    reverse_qty
+                };
+
+                let request = OrderRequest {
+                    symbol: leg.symbol.clone(),
+                    side: reverse_side,
+                    order_type: OrderType::Market,
+                    quantity,
+                    price: None,
+                    client_order_id: Some(format!(
+                        "kova_unwind_{}",
+                        chrono::Utc::now().format("%Y%m%d%H%M%S%3f"),
+                    )),
+                };
+
+                match self.exchange.place_order(&request).await {
+                    Ok(result) => {
+                        info!(
+                            "unwind {} {}: filled qty={}, price={}",
+                            reverse_side, leg.symbol, result.executed_quantity, result.effective_price
+                        );
+                        return;
+                    }
+                    Err(e) => {
+                        error!("unwind failed for {}: {}", leg.symbol, e);
+                    }
+                }
+            }
+        }
+
+        error!(
+            "could not unwind {} {} — manual intervention required",
+            held_amount, held_asset
+        );
     }
 }
