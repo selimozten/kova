@@ -144,6 +144,14 @@ impl<E: Exchange> Executor<E> {
                         format!("qty {} below min {}", rounded, info.min_qty),
                     ));
                 }
+                if rounded > info.max_qty {
+                    return Err((
+                        i,
+                        current_asset,
+                        current_amount,
+                        format!("qty {} exceeds max {}", rounded, info.max_qty),
+                    ));
+                }
                 if info.min_notional > Decimal::ZERO {
                     let notional = leg.effective_price * rounded;
                     if notional < info.min_notional {
