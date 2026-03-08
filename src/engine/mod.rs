@@ -165,9 +165,19 @@ pub async fn run_engine<E: Exchange>(exchange: E, config: Config) -> anyhow::Res
                     let losses = total - wins;
                     let evals = stats_eval.load(Ordering::Relaxed);
                     let opps = stats_opp.load(Ordering::Relaxed);
+                    let win_rate = if total > 0 {
+                        format!("{:.1}%", (wins as f64 / total as f64) * 100.0)
+                    } else {
+                        "N/A".to_string()
+                    };
+                    let avg_pnl = if total > 0 {
+                        pnl / rust_decimal::Decimal::from(total)
+                    } else {
+                        rust_decimal::Decimal::ZERO
+                    };
                     info!(
-                        "[STATS] evals={} opps={} trades={} wins={} losses={} pnl={}",
-                        evals, opps, total, wins, losses, pnl
+                        "[STATS] evals={} opps={} trades={} W/L={}/{} win_rate={} pnl={} avg_pnl={}",
+                        evals, opps, total, wins, losses, win_rate, pnl, avg_pnl
                     );
                 }
                 _ = shutdown_stats.wait() => break,
