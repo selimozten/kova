@@ -11,11 +11,13 @@ use crate::exchange::types::{OrderRequest, OrderSide, OrderStatus, OrderType, Sy
 use crate::exchange::Exchange;
 use crate::util::decimal::round_to_step;
 
+use super::journal::{TradeJournal, TradeOutcome};
 use super::risk::RiskManager;
 
 pub struct Executor<E: Exchange> {
     exchange: Arc<E>,
     risk: Arc<RiskManager>,
+    journal: Option<Arc<TradeJournal>>,
     dry_run: bool,
     cooldown_ms: u64,
     max_opportunity_age_ms: u64,
@@ -26,6 +28,7 @@ impl<E: Exchange> Executor<E> {
     pub fn new(
         exchange: Arc<E>,
         risk: Arc<RiskManager>,
+        journal: Option<Arc<TradeJournal>>,
         dry_run: bool,
         cooldown_ms: u64,
         max_opportunity_age_ms: u64,
@@ -34,6 +37,7 @@ impl<E: Exchange> Executor<E> {
         Self {
             exchange,
             risk,
+            journal,
             dry_run,
             cooldown_ms,
             max_opportunity_age_ms,
@@ -67,6 +71,16 @@ impl<E: Exchange> Executor<E> {
 
         info!("executing: {}", opp);
 
+        if self.dry_run {
+            info!("[DRY RUN] would execute 3 legs, expected profit: {} ({:.4}%)",
+                opp.profit_amount, opp.profit_pct);
+            self.risk.record_trade(opp.profit_amount);
+            if let Some(j) = &self.journal {
+                j.record(&opp, TradeOutcome::DryRun, true);
+            }
+            return;
+        }
+
         // Verify we have enough balance for the first leg
         match self.exchange.get_balances().await {
             Ok(balances) => {
@@ -85,13 +99,6 @@ impl<E: Exchange> Executor<E> {
             }
         }
 
-        if self.dry_run {
-            info!("[DRY RUN] would execute 3 legs, expected profit: {} ({:.4}%)",
-                opp.profit_amount, opp.profit_pct);
-            self.risk.record_trade(opp.profit_amount);
-            return;
-        }
-
         // Execute 3 legs sequentially
         let result = self.execute_legs(&opp).await;
 
@@ -99,9 +106,18 @@ impl<E: Exchange> Executor<E> {
             Ok(actual_profit) => {
                 info!("trade completed, actual profit: {}", actual_profit);
                 self.risk.record_trade(actual_profit);
+                if let Some(j) = &self.journal {
+                    j.record(&opp, TradeOutcome::Executed, false);
+                }
             }
             Err((failed_leg, held_asset, held_amount, msg)) => {
                 error!("trade failed at leg {}: {}", failed_leg + 1, msg);
+                if let Some(j) = &self.journal {
+                    j.record(&opp, TradeOutcome::Failed {
+                        leg: failed_leg + 1,
+                        reason: msg.clone(),
+                    }, false);
+                }
                 if failed_leg > 0 && held_amount > Decimal::ZERO {
                     self.attempt_unwind(&opp, failed_leg, &held_asset, held_amount).await;
                 }

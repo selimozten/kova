@@ -1,4 +1,5 @@
 pub mod executor;
+pub mod journal;
 pub mod risk;
 
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -16,6 +17,7 @@ use crate::exchange::Exchange;
 use crate::util::shutdown::ShutdownSignal;
 
 use executor::Executor;
+use journal::TradeJournal;
 use risk::RiskManager;
 
 /// Run the full engine: discovery, depth subscription, detection, execution.
@@ -97,10 +99,20 @@ pub async fn run_engine<E: Exchange>(exchange: E, config: Config) -> anyhow::Res
     // Risk manager (shared)
     let risk_manager = Arc::new(RiskManager::new(&config.risk));
 
+    // Trade journal
+    let journal = match TradeJournal::open(std::path::Path::new("kova-journal.jsonl")) {
+        Ok(j) => Some(Arc::new(j)),
+        Err(e) => {
+            warn!("could not open trade journal: {}", e);
+            None
+        }
+    };
+
     // Executor
     let executor = Executor::new(
         exchange.clone(),
         risk_manager.clone(),
+        journal,
         config.general.dry_run,
         config.risk.cooldown_ms,
         config.risk.max_opportunity_age_ms,
