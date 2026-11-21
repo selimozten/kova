@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 description = "Triangular arbitrage engine for cryptocurrency markets"
 license = "MIT"
-rust-version = "1.75"
+rust-version = "1.88"
 
 [[bin]]
 name = "kova"
@@ -32,6 +32,7 @@ anyhow = "1"
 hex = "0.4"
 base64 = "0.22"
 tokio-util = "0.7"
+crypto-orderbook = { version = "0.5.2", default-features = false }
 
 [dev-dependencies]
 tokio-test = "0.4"
