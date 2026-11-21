@@ -143,6 +143,23 @@ pub async fn run_engine<E: Exchange>(exchange: E, config: Config) -> anyhow::Res
         }
     });
 
+    // Task: Order book resync (fresh snapshot after a depth sequence gap)
+    let (resync_tx, mut resync_rx) = mpsc::channel::<String>(1024);
+    let resync_exchange = exchange.clone();
+    let resync_obs = order_books.clone();
+    tokio::spawn(async move {
+        while let Some(sym) = resync_rx.recv().await {
+            match resync_exchange.fetch_order_book_snapshot(&sym, 20).await {
+                Ok(ob) => {
+                    resync_obs.insert(sym, ob);
+                }
+                Err(e) => warn!("failed to resync snapshot for {}: {}", sym, e),
+            }
+        }
+    });
+    // Only Binance depth diffs carry sequential update ids.
+    let resync_tx = (exchange.name() == "binance").then_some(resync_tx);
+
     // Task: Arbitrage detector
     let detect_paths = paths.clone();
     let detect_obs = order_books.clone();
@@ -162,6 +179,7 @@ pub async fn run_engine<E: Exchange>(exchange: E, config: Config) -> anyhow::Res
                 detect_eval,
                 detect_opp,
                 config.risk.max_ob_age_ms,
+                resync_tx,
             ) => {}
             _ = shutdown_detect.wait() => {
                 info!("detector shutting down");

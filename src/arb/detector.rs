@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
+use crypto_orderbook::orderbook::sync::{live, Live};
+use crypto_orderbook::{DepthUpdate, Market};
 use dashmap::DashMap;
 use rust_decimal::Decimal;
 use tokio::sync::{broadcast, mpsc};
@@ -133,6 +135,64 @@ pub fn build_symbol_index(paths: &[TrianglePath]) -> HashMap<String, Vec<usize>>
     index
 }
 
+/// Apply `diff` to `ob` in Binance update-id order. On a sequence gap the
+/// book is emptied, diffs are buffered and a fresh snapshot is requested on
+/// `resync_tx`; the buffer is replayed once the snapshot is installed.
+/// Without `resync_tx` (exchanges with no update ids) diffs apply as-is.
+/// Returns true when the book is in sequence and safe to evaluate.
+fn sync_book(
+    ob: &mut OrderBook,
+    diff: DepthDiff,
+    pending: &mut HashMap<String, Vec<DepthDiff>>,
+    resync_tx: Option<&mpsc::Sender<String>>,
+) -> bool {
+    let Some(resync_tx) = resync_tx else {
+        ob.apply_diff(&diff);
+        return true;
+    };
+    let mut queue = match pending.remove(&ob.symbol) {
+        Some(mut buf) if ob.last_update_id == 0 => {
+            buf.push(diff);
+            if buf.len() > 1000 {
+                buf.clear();
+                let _ = resync_tx.try_send(ob.symbol.clone());
+            }
+            pending.insert(ob.symbol.clone(), buf);
+            return false;
+        }
+        Some(buf) => buf,
+        None => Vec::new(),
+    };
+    queue.push(diff);
+    for i in 0..queue.len() {
+        let ids = DepthUpdate {
+            first_update_id: queue[i].first_update_id,
+            last_update_id: queue[i].last_update_id,
+            prev_last_update_id: None,
+            bids: Vec::new(),
+            asks: Vec::new(),
+        };
+        match live(Market::Spot, ob.last_update_id, &ids) {
+            Live::Apply => ob.apply_diff(&queue[i]),
+            Live::Ignore => {}
+            Live::Gap { expected, got } => {
+                debug!(
+                    "{}: depth gap (expected {expected}, got {got}), resyncing",
+                    ob.symbol
+                );
+                ob.bids.clear();
+                ob.asks.clear();
+                ob.last_update_id = 0;
+                ob.updated_at_ms = 0;
+                pending.insert(ob.symbol.clone(), queue.split_off(i));
+                let _ = resync_tx.try_send(ob.symbol.clone());
+                return false;
+            }
+        }
+    }
+    true
+}
+
 /// Run the arbitrage detector loop.
 /// Listens for depth updates, maintains local order books, and evaluates triangles.
 pub async fn run_detector(
@@ -147,8 +207,10 @@ pub async fn run_detector(
     evaluated_counter: Arc<AtomicU64>,
     opportunity_counter: Arc<AtomicU64>,
     max_ob_age_ms: u64,
+    resync_tx: Option<mpsc::Sender<String>>,
 ) {
     let symbol_index = build_symbol_index(&paths);
+    let mut pending: HashMap<String, Vec<DepthDiff>> = HashMap::new();
 
     info!(
         "detector running: {} paths, min_profit={}%",
@@ -170,11 +232,14 @@ pub async fn run_detector(
         };
 
         // Update local order book
-        {
+        let in_sync = {
             let mut ob = order_books
                 .entry(diff.symbol.clone())
                 .or_insert_with(|| OrderBook::new(diff.symbol.clone()));
-            ob.apply_diff(&diff);
+            sync_book(&mut ob, diff.clone(), &mut pending, resync_tx.as_ref())
+        };
+        if !in_sync {
+            continue;
         }
 
         // Evaluate affected triangles
@@ -285,5 +350,50 @@ mod tests {
         assert!(index.contains_key("BTCUSDT"));
         assert!(index.contains_key("ETHBTC"));
         assert!(index.contains_key("ETHUSDT"));
+    }
+
+    fn diff(first: u64, last: u64, bid: u64) -> DepthDiff {
+        DepthDiff {
+            symbol: "BTCUSDT".into(),
+            bids: vec![crate::exchange::types::PriceLevel {
+                price: Decimal::from(bid),
+                quantity: Decimal::ONE,
+            }],
+            asks: vec![],
+            first_update_id: first,
+            last_update_id: last,
+        }
+    }
+
+    #[test]
+    fn test_gap_resyncs_from_snapshot() {
+        let (tx, mut rx) = mpsc::channel(8);
+        let mut pending = HashMap::new();
+        let mut feed = |ob: &mut OrderBook, d| sync_book(ob, d, &mut pending, Some(&tx));
+        let mut ob = OrderBook::new("BTCUSDT".into());
+        ob.last_update_id = 100; // REST snapshot
+        ob.bids.insert(Decimal::from(50_000), Decimal::ONE);
+
+        // Covered by the snapshot: dropped. Next in sequence: applied.
+        assert!(feed(&mut ob, diff(90, 100, 1)));
+        assert!(!ob.bids.contains_key(&Decimal::ONE));
+        assert!(feed(&mut ob, diff(101, 105, 49_999)));
+
+        // 106..=109 lost: the book is pulled and a snapshot requested.
+        assert!(!feed(&mut ob, diff(110, 112, 49_998)));
+        assert_eq!(rx.try_recv().unwrap(), "BTCUSDT");
+        assert!(ob.bids.is_empty());
+        assert!(!feed(&mut ob, diff(113, 115, 49_997)));
+
+        // Fresh snapshot at 111: buffered diffs replay on top of it.
+        let mut snap = OrderBook::new("BTCUSDT".into());
+        snap.last_update_id = 111;
+        snap.bids.insert(Decimal::from(49_990), Decimal::ONE);
+        ob = snap;
+        assert!(feed(&mut ob, diff(116, 116, 49_996)));
+        assert_eq!(ob.last_update_id, 116);
+        for p in [49_990, 49_998, 49_997, 49_996] {
+            assert!(ob.bids.contains_key(&Decimal::from(p)));
+        }
     }
 }
